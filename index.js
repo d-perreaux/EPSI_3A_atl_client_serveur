@@ -1,5 +1,5 @@
 const path = require("path");
-
+const fs = require("fs");
 const express = require("express");
 const oracledb = require("oracledb");
 
@@ -28,6 +28,7 @@ async function connectToDatabase() {
       password: "password",
       connectionString: "0.0.0.0:1522/XEPDB1",
     });
+
   } catch (err) {
     console.error(err);
   }
@@ -146,6 +147,65 @@ async function setupDatabase() {
       END IF;
 
   END;`
+  );
+  await connection.execute(
+    `	
+    
+    CREATE OR REPLACE PROCEDURE export_accounts_to_csv(
+      f_account_id IN transactions.account_id%TYPE
+    ) 
+    AS
+      v_file UTL_FILE.FILE_TYPE;
+      v_line VARCHAR2(32767);
+    BEGIN
+      v_file := UTL_FILE.FOPEN('EXPORT_DIR', 'accounts.csv', 'W');
+      UTL_FILE.PUT_LINE(v_file, 'ID,NAME,AMOUNT');
+      
+      FOR rec IN (SELECT id, name, amount FROM transactions WHERE account_id = f_account_id) 
+      LOOP
+        v_line := rec.id || ',' || rec.name || ',' || rec.amount;
+      
+            UTL_FILE.PUT_LINE(v_file, v_line);
+      
+      END LOOP;
+      UTL_FILE.FCLOSE(v_file);
+      EXCEPTION
+         WHEN OTHERS THEN
+          IF UTL_FILE.IS_OPEN(v_file)
+          THEN
+           UTL_FILE.FCLOSE(v_file);
+          END IF;
+        RAISE;
+    END;`
+  );
+  await connection.execute(
+    `CREATE OR REPLACE PROCEDURE read_file(p_filename IN VARCHAR2, p_file_content OUT CLOB) IS
+    l_file UTL_FILE.FILE_TYPE;
+    l_line VARCHAR2(32767);
+  BEGIN
+    p_file_content := '';
+    l_file := UTL_FILE.FOPEN('EXPORT_DIR', p_filename, 'R');
+  
+    LOOP
+        BEGIN
+            UTL_FILE.GET_LINE(l_file, l_line);
+            p_file_content := p_file_content || l_line || CHR(10); -- CHR(10) is newline character
+  
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                EXIT;
+        END;
+    END LOOP;
+  
+    UTL_FILE.FCLOSE(l_file);
+  EXCEPTION
+    WHEN UTL_FILE.INVALID_PATH THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Invalid file path');
+    WHEN UTL_FILE.READ_ERROR THEN
+        RAISE_APPLICATION_ERROR(-20004, 'File read error');
+    WHEN OTHERS THEN
+        RAISE_APPLICATION_ERROR(-20005, 'An error occurred: ' || SQLERRM);
+  END read_file;`
   );
   
   // Insert some data
@@ -276,4 +336,40 @@ app.get("/views/:userId/:accountId", async (req, res) => {
     accounts: account.rows[0],
     transactions: transactions.rows,
   });
+});
+
+app.get("/accounts/:accountId/exports", async (req, res) => {
+  const exportsSQL = `BEGIN
+	read_file('accounts.csv', :content);
+END;`;
+const result = await connection.execute(exportsSQL, {
+	content: { dir: oracledb.BIND_OUT, type: oracledb.CLOB },
+});
+const data = await result.outBinds.content.getData();
+res.json({ content: data });
+})
+
+app.post("/accounts/:accountId/exports", async (req, res) => {
+  try {
+        const createSvg = 
+      `BEGIN
+        export_accounts_to_csv(:account_id);
+       END;`
+    
+          const result = await connection.execute(createSvg, {
+      account_id: req.params.accountId,
+    });
+
+    const filePath = '/opt/oracle/oradata/accounts.csv'; // This should match the path used in the directory creation
+
+    // Ensure the file exists
+    if (result) {
+      res.status(201).send("File created")
+    } else {
+      res.status(404).send("File not found");
+    }
+  } catch (err) {
+    console.error("Error exporting accounts to CSV:", err);
+    res.sendStatus(500);
+  }
 });
