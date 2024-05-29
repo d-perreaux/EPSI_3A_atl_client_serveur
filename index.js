@@ -111,6 +111,16 @@ async function setupDatabase() {
   END;`
   );
   await connection.execute(
+    `CREATE OR REPLACE FUNCTION FormatTransactionName(
+      p_type IN NUMBER, p_name IN VARCHAR2
+    )  
+      RETURN VARCHAR2
+    IS
+      BEGIN
+      RETURN 'T' || TO_CHAR(p_type) || '-' || UPPER(p_name);
+    END;`
+  );
+  await connection.execute(
     `CREATE OR REPLACE PROCEDURE execute_transaction (
       p_transactions_name IN transactions.name%TYPE,
       p_transactions_amount IN transactions.amount%TYPE,
@@ -120,7 +130,7 @@ async function setupDatabase() {
   ) AS
   BEGIN
       INSERT INTO transactions (name, amount, type, account_id)
-      VALUES (p_transactions_name, p_transactions_amount, p_transactions_type, p_transactions_account_id)
+      VALUES (FormatTransactionName(p_transactions_type, p_transactions_name), p_transactions_amount, p_transactions_type, p_transactions_account_id)
       RETURNING id INTO p_transactions_id;
 
       IF p_transactions_type = 1 THEN
@@ -137,6 +147,7 @@ async function setupDatabase() {
 
   END;`
   );
+  
   // Insert some data
   const usersSql = `insert into users (name, email, accounts) values(:1, :2, :3)`;
   const usersRows = [
@@ -152,16 +163,13 @@ async function setupDatabase() {
   connection.commit(); // Now query the rows back
 }
 
-
 connectToDatabase().then(() => {
-  setupDatabase()
+  setupDatabase();
   app.listen(3000, () => {
     console.log("Server started on http://localhost:3000");
-    console.log(`Server started on ${connection.connectionString}`);
   });
 });
 
-	
 app.get("/users", async (req, res) => {
   const getUsersSQL = `select * from users`;
   const result = await connection.execute(getUsersSQL);
@@ -240,11 +248,10 @@ app.post("/accounts/:user_id/:account_id/transactions", async (req, res) => {
     transactions_id: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
   });
   if (result.outBinds && result.outBinds.transactions_id) {
-    res.redirect(`/views/1/1`);
+    res.redirect(`/views/${req.params.user_id}/${req.params.account_id}`);
   } else {
     res.sendStatus(500);
   }
-
 });
 
 app.get("/transactions", async (req, res) => {
@@ -255,16 +262,18 @@ app.get("/transactions", async (req, res) => {
 
 app.get("/views/:userId/:accountId", async (req, res) => {
   const getCurrentUserSQL = `select * from users where id = :1`;
-  const getAccountsSQL = `select * from accounts where user_id = :1 AND id = :2`;
-  const [currentUser, accounts] = await Promise.all([
+  const getAccountsSQL = `select * from accounts where id = :2`;
+  const getTransactionsSQL = `select * from transactions where account_id = :1`;
+  const [currentUser, account, transactions] = await Promise.all([
     connection.execute(getCurrentUserSQL, [req.params.userId]),
-    connection.execute(getAccountsSQL, [req.params.userId, req.params.accountId]),
+    connection.execute(getAccountsSQL, [req.params.accountId]),
+    connection.execute(getTransactionsSQL, [req.params.accountId]),
   ]);
 
-  console.log(currentUser, accounts);
+  console.log(currentUser, account);
   res.render("transaction-view", {
     currentUser: currentUser.rows[0],
-    accounts: accounts.rows[0],
+    accounts: account.rows[0],
+    transactions: transactions.rows,
   });
 });
-

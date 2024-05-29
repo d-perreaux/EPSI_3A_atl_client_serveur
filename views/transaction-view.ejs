@@ -4,6 +4,10 @@
 <div style="display: flex; gap: 0.5rem">
   <span><%= accounts.NAME %></span>
   <span><%= accounts.AMOUNT %>$</span>
+  </br>
+  <span>Nbr de transactions : </span>
+  <span><%= accounts.NBRTRANSACTIONS %></span>
+
 </div>
 
 <form id="transactionForm" style="display: flex;" action="/accounts/1/1/transactions" method="post">
@@ -24,3 +28,10 @@
     <input type="hidden" id="account_id" name="account_id" value="<%= accounts.ID %>">
     <button type="submit">Effectuer transaction</button>
 </form>
+
+<% transactions.forEach(function(transaction){ %>
+    <div style="display: flex; gap: 0.5rem">
+      <span><%= transaction.NAME %></span>
+      <span><%= transaction.AMOUNT %>$</span>
+    </div>
+    <% }); %>
